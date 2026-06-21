@@ -1,16 +1,19 @@
 """
-agent.py — ResearchAgent: single proactive agent
-Dùng tools từ tools.py, chạy vòng lặp agentic đến khi task hoàn chỉnh.
+agent.py — ResearchAgent: single proactive agent (DeepSeek backend)
+Dùng requests gọi DeepSeek REST API (OpenAI-compatible endpoint).
 """
 import os
 import sys
-import anthropic
+import json
+import requests
 from dotenv import load_dotenv
 from src.tools import TOOL_DEFINITIONS, execute_tool  # Bài 1
 
 load_dotenv()
 
-client = anthropic.Anthropic(api_key=os.environ["ANTHROPIC_API_KEY"])
+DEEPSEEK_API_KEY = os.environ["DEEPSEEK_API_KEY"]
+DEEPSEEK_URL = "https://api.deepseek.com/chat/completions"
+MODEL = "deepseek-chat"
 
 # ── System prompt: proactive + completion criteria ────────────────────────
 SYSTEM_PROMPT = """You are ResearchAgent — a proactive research assistant.
@@ -46,81 +49,77 @@ Return your final report in this structure:
 **Sources consulted:** [list URLs]
 **Note saved at:** [file path]"""
 
+
+def _call_deepseek(messages: list) -> dict:
+    """Call DeepSeek API. Returns the response dict."""
+    headers = {
+        "Authorization": f"Bearer {DEEPSEEK_API_KEY}",
+        "Content-Type": "application/json",
+    }
+    payload = {
+        "model": MODEL,
+        "max_tokens": 4096,
+        "tools": TOOL_DEFINITIONS,
+        "messages": messages,
+    }
+    resp = requests.post(DEEPSEEK_URL, headers=headers, json=payload, timeout=60)
+    resp.raise_for_status()
+    return resp.json()
+
+
 # ── Core agentic loop ─────────────────────────────────────────────────────
 def run_research_agent(topic: str, max_iterations: int = 10) -> str:
     """
     Run the research agent on a topic.
     Returns the final research report as a string.
     """
-    messages = [{
-        "role": "user",
-        "content": f"Please research this topic thoroughly: {topic}"
-    }]
+    messages = [
+        {"role": "system", "content": SYSTEM_PROMPT},
+        {"role": "user", "content": f"Please research this topic thoroughly: {topic}"},
+    ]
 
     print(f"\n🔍 ResearchAgent starting: '{topic}'")
     print("─" * 50)
 
     for iteration in range(max_iterations):
-        # ① Call Claude
-        response = client.messages.create(
-            model="claude-haiku-4-5-20251001",  # Haiku: fast + cheap for research
-            max_tokens=4096,
-            system=SYSTEM_PROMPT,
-            tools=TOOL_DEFINITIONS,
-            messages=messages,
-        )
+        # ① Call DeepSeek
+        data = _call_deepseek(messages)
+        choice = data["choices"][0]
+        message = choice["message"]
+        finish_reason = choice["finish_reason"]
 
-        # ② Append Claude's response to history
-        messages.append({"role": "assistant", "content": response.content})
+        # ② Append assistant message to history
+        assistant_msg = {"role": "assistant", "content": message.get("content")}
+        tool_calls = message.get("tool_calls")
+        if tool_calls:
+            assistant_msg["tool_calls"] = tool_calls
+        messages.append(assistant_msg)
 
         # ③ Check stop reason
-        if response.stop_reason == "end_turn":
-            # Extract final text answer
-            final = next(
-                (b.text for b in response.content if b.type == "text"),
-                "[Agent returned no text]"
-            )
+        if finish_reason == "stop":
+            final = message.get("content") or "[Agent returned no text]"
             print(f"\n✅ Agent completed in {iteration + 1} iteration(s)")
             return final
 
-        # ④ Execute all tool calls (parallel support)
-        tool_results = []
-        for block in response.content:
-            if block.type != "tool_use":
-                continue
+        # ④ Execute all tool calls; each result is a separate "tool" message
+        if tool_calls:
+            for tc in tool_calls:
+                name = tc["function"]["name"]
+                input_dict = json.loads(tc["function"]["arguments"])
 
-            print(f"  → Tool: {block.name}({list(block.input.keys())})")
-            result = execute_tool(block.name, block.input)
+                print(f"  → Tool: {name}({list(input_dict.keys())})")
+                result = execute_tool(name, input_dict)
 
-            tool_results.append({
-                "type": "tool_result",
-                "tool_use_id": block.id,  # bắt buộc — matching với request
-                "content": result,
-            })
+                messages.append({
+                    "role": "tool",
+                    "tool_call_id": tc["id"],
+                    "content": result,
+                })
 
-        # ⑤ Send all results back in one message
-        messages.append({"role": "user", "content": tool_results})
-
-    # Guard: max iterations reached
     return f"[Agent stopped after {max_iterations} iterations without completing]"
 
 
-# ── Message anatomy helper ────────────────────────────────────────────────
-def explain_message_anatomy(messages: list) -> None:
-    """Print message structure for learning — không dùng trong production."""
-    print("\n📋 Message History Anatomy:")
-    for i, msg in enumerate(messages):
-        role = msg["role"]
-        content = msg["content"]
-        if isinstance(content, str):
-            print(f"  [{i}] {role}: text({len(content)} chars)")
-        elif isinstance(content, list):
-            types = [b.get("type", b.__class__.__name__) if isinstance(b, dict) else b.type for b in content]
-            print(f"  [{i}] {role}: {types}")
-
-
 if __name__ == "__main__":
-    # Chạy từ command line: python src/agent.py "AI agents 2024"
     topic = " ".join(sys.argv[1:]) if len(sys.argv) > 1 else "AI agents and multi-agent systems"
 
     report = run_research_agent(topic)
