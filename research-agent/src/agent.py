@@ -1,13 +1,13 @@
 """
-agent.py — ResearchAgent: single proactive agent (DeepSeek backend)
-Dùng requests gọi DeepSeek REST API (OpenAI-compatible endpoint).
+agent.py — ResearchAgent: single proactive agent (Anthropic backend)
+Dùng requests gọi Anthropic Messages API trực tiếp.
 """
 import os
 import sys
 import json
 import requests
 from pathlib import Path
-from src.tools import TOOL_DEFINITIONS, execute_tool  # Bài 1
+from src.tools import TOOL_DEFINITIONS, execute_tool
 
 # Load .env manually (python-dotenv may not be installed)
 _env_file = Path(__file__).parent.parent / ".env"
@@ -18,9 +18,9 @@ if _env_file.exists():
             k, v = line.split("=", 1)
             os.environ.setdefault(k.strip(), v.strip())
 
-DEEPSEEK_API_KEY = os.environ["DEEPSEEK_API_KEY"]
-DEEPSEEK_URL = "https://api.deepseek.com/chat/completions"
-MODEL = "deepseek-chat"
+ANTHROPIC_API_KEY = os.environ["ANTHROPIC_API_KEY"]
+ANTHROPIC_URL = "https://api.anthropic.com/v1/messages"
+MODEL = "claude-sonnet-4-6"
 
 # ── System prompt: proactive + completion criteria ────────────────────────
 SYSTEM_PROMPT = """You are ResearchAgent — a proactive research assistant.
@@ -57,19 +57,21 @@ Return your final report in this structure:
 **Note saved at:** [file path]"""
 
 
-def _call_deepseek(messages: list) -> dict:
-    """Call DeepSeek API. Returns the response dict."""
+def _call_anthropic(messages: list) -> dict:
+    """Call Anthropic Messages API. Returns the response dict."""
     headers = {
-        "Authorization": f"Bearer {DEEPSEEK_API_KEY}",
+        "x-api-key": ANTHROPIC_API_KEY,
+        "anthropic-version": "2023-06-01",
         "Content-Type": "application/json",
     }
     payload = {
         "model": MODEL,
         "max_tokens": 4096,
+        "system": SYSTEM_PROMPT,
         "tools": TOOL_DEFINITIONS,
         "messages": messages,
     }
-    resp = requests.post(DEEPSEEK_URL, headers=headers, json=payload, timeout=60)
+    resp = requests.post(ANTHROPIC_URL, headers=headers, json=payload, timeout=60)
     resp.raise_for_status()
     return resp.json()
 
@@ -80,8 +82,8 @@ def run_research_agent(topic: str, max_iterations: int = 10) -> str:
     Run the research agent on a topic.
     Returns the final research report as a string.
     """
+    # Anthropic: system is a top-level param, messages start with user
     messages = [
-        {"role": "system", "content": SYSTEM_PROMPT},
         {"role": "user", "content": f"Please research this topic thoroughly: {topic}"},
     ]
 
@@ -89,39 +91,43 @@ def run_research_agent(topic: str, max_iterations: int = 10) -> str:
     print("─" * 50)
 
     for iteration in range(max_iterations):
-        # ① Call DeepSeek
-        data = _call_deepseek(messages)
-        choice = data["choices"][0]
-        message = choice["message"]
-        finish_reason = choice["finish_reason"]
+        # ① Call Anthropic
+        data = _call_anthropic(messages)
+        stop_reason = data["stop_reason"]
+        content_blocks = data["content"]  # list of blocks: text | tool_use
 
-        # ② Append assistant message to history
-        assistant_msg = {"role": "assistant", "content": message.get("content")}
-        tool_calls = message.get("tool_calls")
-        if tool_calls:
-            assistant_msg["tool_calls"] = tool_calls
-        messages.append(assistant_msg)
+        # ② Append assistant message (Anthropic keeps content as block list)
+        messages.append({"role": "assistant", "content": content_blocks})
 
         # ③ Check stop reason
-        if finish_reason == "stop":
-            final = message.get("content") or "[Agent returned no text]"
+        if stop_reason == "end_turn":
+            final = next(
+                (b["text"] for b in content_blocks if b["type"] == "text"),
+                "[Agent returned no text]"
+            )
             print(f"\n✅ Agent completed in {iteration + 1} iteration(s)")
             return final
 
-        # ④ Execute all tool calls; each result is a separate "tool" message
-        if tool_calls:
-            for tc in tool_calls:
-                name = tc["function"]["name"]
-                input_dict = json.loads(tc["function"]["arguments"])
+        # ④ Execute all tool_use blocks; results go into a single user message
+        if stop_reason == "tool_use":
+            tool_results = []
+            for block in content_blocks:
+                if block["type"] != "tool_use":
+                    continue
+                name = block["name"]
+                input_dict = block["input"]  # already a dict, not JSON string
 
                 print(f"  → Tool: {name}({list(input_dict.keys())})")
                 result = execute_tool(name, input_dict)
 
-                messages.append({
-                    "role": "tool",
-                    "tool_call_id": tc["id"],
+                tool_results.append({
+                    "type": "tool_result",
+                    "tool_use_id": block["id"],
                     "content": result,
                 })
+
+            # Anthropic: all tool results in ONE user message
+            messages.append({"role": "user", "content": tool_results})
 
     return f"[Agent stopped after {max_iterations} iterations without completing]"
 

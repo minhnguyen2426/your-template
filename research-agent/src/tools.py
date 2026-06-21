@@ -57,13 +57,11 @@ Key insight: Start simple. Add complexity only when it demonstrably improves out
 
 NOTES_DIR = Path(__file__).parent.parent / "notes"
 
-# ── Tool definitions (OpenAI-compatible format for DeepSeek) ─────────────
+# ── Tool definitions (Anthropic format) ──────────────────────────────────
 TOOL_DEFINITIONS = [
     {
-        "type": "function",
-        "function": {
-            "name": "search_web",
-            "description": """Search the web for information on a topic.
+        "name": "search_web",
+        "description": """Search the web for information on a topic.
 
 Use this when you need current information, facts, articles, or data about a topic.
 Returns a list of search results with title, URL, and snippet.
@@ -73,74 +71,65 @@ When NOT to use: When you already have the URL (use fetch_page instead),
 or when the information is already in context.
 
 Tip: Be specific. 'Claude AI tool use 2024' is better than 'AI'.""",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "query": {
-                        "type": "string",
-                        "description": "Search query. Be specific and focused."
-                    }
-                },
-                "required": ["query"]
-            }
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "query": {
+                    "type": "string",
+                    "description": "Search query. Be specific and focused."
+                }
+            },
+            "required": ["query"]
         }
     },
     {
-        "type": "function",
-        "function": {
-            "name": "fetch_page",
-            "description": """Fetch and return the text content of a web page.
+        "name": "fetch_page",
+        "description": """Fetch and return the text content of a web page.
 
 Use this when you have a specific URL and want to read its full content.
 Returns the page text (truncated to 2000 chars if too long).
 
 When to use: After search_web gives you a URL you want to read deeply.
 When NOT to use: When you don't have a URL yet (use search_web first).""",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "url": {
-                        "type": "string",
-                        "description": "Full URL starting with https://"
-                    }
-                },
-                "required": ["url"]
-            }
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "url": {
+                    "type": "string",
+                    "description": "Full URL starting with https://"
+                }
+            },
+            "required": ["url"]
         }
     },
     {
-        "type": "function",
-        "function": {
-            "name": "summarize_text",
-            "description": """Summarize a long text into key points.
+        "name": "summarize_text",
+        "description": """Summarize a long text into key points.
 
 Use this to condense lengthy content before saving or presenting.
 Returns a concise bullet-point summary.
 
 When to use: After fetching a long page, before saving notes.
 When NOT to use: For short texts under 200 words (summarize inline instead).""",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "text": {
-                        "type": "string",
-                        "description": "The text to summarize"
-                    },
-                    "max_words": {
-                        "type": "integer",
-                        "description": "Maximum words in summary. Default: 150",
-                        "default": 150
-                    }
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "text": {
+                    "type": "string",
+                    "description": "The text to summarize"
                 },
-                "required": ["text"]
-            }
+                "max_words": {
+                    "type": "integer",
+                    "description": "Maximum words in summary. Default: 150",
+                    "default": 150
+                }
+            },
+            "required": ["text"]
         }
     },
     {
-        "type": "function",
-        "function": {
-            "name": "save_note",
-            "description": """Save a research note to disk for later reference.
+        "name": "save_note",
+        "description": """Save a research note to disk for later reference.
 
 Use this to persist important findings, summaries, or conclusions.
 Notes are saved to the notes/ directory as markdown files.
@@ -148,20 +137,19 @@ Returns the absolute path of the saved file.
 
 When to use: After researching a topic and finding key insights to keep.
 When NOT to use: For temporary data (keep in context instead).""",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "title": {
-                        "type": "string",
-                        "description": "Note title (used as filename). Keep it short and descriptive."
-                    },
-                    "content": {
-                        "type": "string",
-                        "description": "Note content in markdown format"
-                    }
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "title": {
+                    "type": "string",
+                    "description": "Note title (used as filename). Keep it short and descriptive."
                 },
-                "required": ["title", "content"]
-            }
+                "content": {
+                    "type": "string",
+                    "description": "Note content in markdown format"
+                }
+            },
+            "required": ["title", "content"]
         }
     },
 ]
