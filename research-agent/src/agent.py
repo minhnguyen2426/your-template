@@ -6,10 +6,17 @@ import os
 import sys
 import json
 import requests
-from dotenv import load_dotenv
+from pathlib import Path
 from src.tools import TOOL_DEFINITIONS, execute_tool  # Bài 1
 
-load_dotenv()
+# Load .env manually (python-dotenv may not be installed)
+_env_file = Path(__file__).parent.parent / ".env"
+if _env_file.exists():
+    for line in _env_file.read_text().splitlines():
+        line = line.strip()
+        if line and not line.startswith("#") and "=" in line:
+            k, v = line.split("=", 1)
+            os.environ.setdefault(k.strip(), v.strip())
 
 DEEPSEEK_API_KEY = os.environ["DEEPSEEK_API_KEY"]
 DEEPSEEK_URL = "https://api.deepseek.com/chat/completions"
